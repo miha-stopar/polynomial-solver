@@ -148,13 +148,13 @@ fn demo_get_plaf() {
     gen_circuit_plaf::<SuperCircuit<Fr, 1, 64, 0x100>>("super", 19, &block);
 }
 
-fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<usize, &str>) -> QPoly
+fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf) -> QPoly
 {
     use Expr::*;
 
     match expr {
         Pow(e, f) => {
-            let e = build_poly(*e, vars);
+            let e = build_poly(*e, vars, plaf);
             let mut poly = QPoly::one();
             for _ in 0..f {
                 poly = poly * e.clone();
@@ -162,7 +162,7 @@ fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<usize, &str>) -> QPoly
             poly
         }
         Neg(e) => {
-            let e = build_poly(*e, vars);
+            let e = build_poly(*e, vars, plaf);
             let min = QPoly::new_constant(Rational32::from(-1));
             min * e
         }
@@ -170,15 +170,29 @@ fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<usize, &str>) -> QPoly
             QPoly::new_constant(Rational32::from(f.to_i32().unwrap()))
         },
         Var(v) => {
-            let l = vars.len();
-            println!("{}", v.to_string());
-            vars.insert(l, "foo");
-            println!("{}", l);
-            QPoly::new_var(l.try_into().unwrap())
+            let cell_fmt =
+                |f: &mut fmt::Formatter<'_>, c: &Cell| write!(f, "{}", CellDisplay { c, plaf: &plaf });
+            let f = format!(
+                "{}",
+                ExprDisplay {
+                    e: &Var(v),
+                    var_fmt: cell_fmt
+                }
+            );
+
+            if !vars.contains_key(&f) {
+                let l = vars.len();
+                let poly = QPoly::new_var(l.try_into().unwrap());
+                vars.insert(f, poly.clone());
+                poly
+            } else {
+                let poly = vars.get(&f).unwrap();
+                poly.clone()
+            }
         },
         Sum(es) => {
             let mut poly = QPoly::zero();
-            for x in es.into_iter().map(|x| build_poly(x, vars)) {
+            for x in es.into_iter().map(|x| build_poly(x, vars, plaf)) {
                 poly = poly + x;
             }
 
@@ -186,7 +200,7 @@ fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<usize, &str>) -> QPoly
         }
         Mul(es) => {
             let mut poly = QPoly::one();
-            for x in es.into_iter().map(|x| build_poly(x, vars)) {
+            for x in es.into_iter().map(|x| build_poly(x, vars, plaf)) {
                 poly = poly * x;
             }
 
@@ -221,7 +235,7 @@ fn demo_analysis() {
             );
 
             let mut vars = HashMap::new();
-            let p = build_poly(exp, &mut vars);
+            let p = build_poly(exp, &mut vars, &plaf);
             println!("{}", p);
             println!("======");
 
