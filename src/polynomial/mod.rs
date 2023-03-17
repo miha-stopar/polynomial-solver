@@ -4,6 +4,7 @@ pub mod divmask;
 pub mod grobner_basis;
 pub mod monomial_ordering;
 pub mod signature_basis;
+pub mod circuit;
 
 use super::ordered_ops;
 use bitvec::macros::internal::funty::Unsigned;

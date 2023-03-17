@@ -28,6 +28,14 @@ pest_derive = "2.0"
 bitvec = "1"
 rand = "0.8"
 r1cs-file = { git = "https://github.com/lvella/zeropool-utils.git" }
+num-bigint = { version = "0.4", features = [ "rand" ] }
+polyexen = { path = "../polyexen" }
+zkevm-circuits = { path = "../zkevm-circuits/zkevm-circuits", features = ["test"] }
+bus-mapping = { path = "../zkevm-circuits/bus-mapping", features = ["test"] }
+mock = { path = "../zkevm-circuits/mock" }
+eth-types = { path = "../zkevm-circuits/eth-types" }
+halo2_proofs = "0.2"
+env_logger = "0.9"
 
 [dependencies.rug]
 version = "1.13"
@@ -40,3 +48,13 @@ lto = "thin"
 [profile.release-with-debug]
 inherits = "release"
 debug = true
+
+[patch."https://github.com/privacy-scaling-explorations/halo2.git"]
+halo2_proofs = { path = "../halo2/halo2_proofs" }
+
+[patch."https://github.com/privacy-scaling-explorations/halo2wrong.git"]
+halo2wrong = { path = "../halo2wrong/halo2wrong" }
+
+[patch.crates-io]
+halo2_proofs = { path = "../halo2/halo2_proofs" }
+
