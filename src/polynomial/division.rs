@@ -206,19 +206,26 @@ pub mod tests {
 
     use super::*;
     use crate::polynomial::Polynomial;
-    use num::Rational32;
+    use num::{Rational32, BigRational, BigInt};
     use num_traits::{One, Pow};
 
-    impl CommutativeRing for Rational32 {}
-    impl Field for Rational32 {}
-    pub type QPoly = Polynomial<crate::polynomial::monomial_ordering::Lex, u8, Rational32, i16>;
+    impl CommutativeRing for BigRational {}
+    impl Field for BigRational {}
+    pub type QPoly = Polynomial<crate::polynomial::monomial_ordering::Lex, u8, BigRational, i16>;
 
-    pub fn r<T>(v: T) -> Rational32
-    where
-        Rational32: From<T>,
+    pub fn r(v: i32) -> BigRational
     {
-        Rational32::from(v)
+        BigRational::from(BigInt::from(v))
     }
+
+    /*
+    pub fn r<T>(v: T) -> BigRational
+    where
+        BigRational: From<T>,
+    {
+        BigRational::from(v)
+    }
+    */
 
     #[test]
     fn simple_multivariate_divisions() {

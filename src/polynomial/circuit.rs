@@ -2,7 +2,7 @@ use bus_mapping::{circuit_input_builder::CircuitsParams, mock::BlockData};
 use eth_types::{bytecode, geth_types::GethData, ToWord, Word};
 use halo2_proofs::{dev::MockProver, halo2curves::bn256::Fr, plonk::Circuit};
 use mock::test_ctx::TestContext;
-use num::{Rational32, rational::Ratio};
+use num::{Rational32, rational::Ratio, Rational64, BigRational};
 use num_traits::{One, ToPrimitive, Zero};
 use num_bigint::{BigInt, BigUint, RandBigInt, Sign};
 use polyexen::{
@@ -72,8 +72,7 @@ fn gen_small_block() -> Block<Fr> {
             max_copy_rows: 128,
             max_bytecode: 32,
             max_keccak_rows: 128,
-            // max_evm_rows: 128,
-            max_evm_rows: 8,
+            max_evm_rows: 128,
             max_exp_steps: 128,
         },
     )
@@ -99,7 +98,7 @@ fn gen_empty_block() -> Block<Fr> {
             max_copy_rows: 128,
             max_bytecode: 128,
             max_keccak_rows: 1024,
-            max_evm_rows: 16,
+            max_evm_rows: 128,
             max_exp_steps: 128,
         },
     )
@@ -163,7 +162,7 @@ fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf) 
         }
         Neg(e) => {
             let e = build_poly(*e, vars, plaf);
-            let min = QPoly::new_constant(Rational32::from(-1));
+            let min = QPoly::new_constant(BigRational::from(BigInt::from(-1)));
             min * e
         }
         Const(f) => {
@@ -181,7 +180,7 @@ fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf) 
                     poly.clone()
                 }
             } else {
-                QPoly::new_constant(Rational32::from(f.to_i32().unwrap()))
+                QPoly::new_constant(BigRational::from(BigInt::from(f)))
             }
         },
         Var(v) => {
@@ -224,12 +223,17 @@ fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf) 
     }
 }
 
-fn get_circuit_polys() -> Vec<Polynomial<Lex, u8, Ratio<i32>, i16>> {
+fn get_circuit_polys() -> Vec<Polynomial<Lex, u8, BigRational, i16>> {
     let block = gen_empty_block();
-    let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
-    let k = 9;
+    // let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
+    // let k = 9;
+
+    let circuit = StateCircuit::<Fr>::new_from_block(&block);
+    let k = 20;
+
     let mut plaf = get_plaf(k, &circuit).unwrap();
     name_challanges(&mut plaf);
+
 
     let p = BigUint::parse_bytes(b"100000000000000000000000000000000", 16).unwrap()
         - BigUint::from(159u64);
@@ -242,6 +246,7 @@ fn get_circuit_polys() -> Vec<Polynomial<Lex, u8, Ratio<i32>, i16>> {
         for poly in &plaf.polys {
             let exp = plaf.resolve(&poly.exp, offset);
             let exp = exp.simplify(&p);
+            /*
             println!(
                 "\"{}\" {}",
                 poly.name,
@@ -250,12 +255,13 @@ fn get_circuit_polys() -> Vec<Polynomial<Lex, u8, Ratio<i32>, i16>> {
                     var_fmt: cell_fmt
                 }
             );
+            */
 
             let mut vars = HashMap::new();
             let p = build_poly(exp, &mut vars, &plaf);
-            println!("{}", p);
-            polys.push(p);
-            println!("======");
+            // println!("{}", p);
+            // polys.push(p);
+            // println!("======");
 
             // find_bounds_poly(&exp, &p, &mut analysis);
         }
@@ -299,7 +305,7 @@ mod tests {
         ];
         */
 
-        polys = polys[0..7].to_vec();
+        // polys = polys[0..7].to_vec();
 
         println!("{}", polys.len());
 
