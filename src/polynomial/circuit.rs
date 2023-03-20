@@ -2,7 +2,7 @@ use bus_mapping::{circuit_input_builder::CircuitsParams, mock::BlockData};
 use eth_types::{bytecode, geth_types::GethData, ToWord, Word};
 use halo2_proofs::{dev::MockProver, halo2curves::bn256::Fr, plonk::Circuit};
 use mock::test_ctx::TestContext;
-use num::Rational32;
+use num::{Rational32, rational::Ratio};
 use num_traits::{One, ToPrimitive, Zero};
 use num_bigint::{BigInt, BigUint, RandBigInt, Sign};
 use polyexen::{
@@ -36,7 +36,7 @@ use std::{
 
 use crate::polynomial::division::tests::r;
 
-use super::division::tests::QPoly;
+use super::{division::tests::QPoly, Polynomial, monomial_ordering::Lex};
 
 fn name_challanges(plaf: &mut Plaf) {
     plaf.set_challange_alias(0, "r_word".to_string());
@@ -167,7 +167,22 @@ fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf) 
             min * e
         }
         Const(f) => {
-            QPoly::new_constant(Rational32::from(f.to_i32().unwrap()))
+            if f == BigUint::from(1234u64) {
+                // TODO(miha): note that in plaf.rs the challenge is for now resolved
+                // to Const(BigUint::from(1234u64))
+                let challenge_name = "challenge";
+                if !vars.contains_key(challenge_name) {
+                    let l = vars.len();
+                    let poly = QPoly::new_var(l.try_into().unwrap());
+                    vars.insert(challenge_name.to_owned(), poly.clone());
+                    poly
+                } else {
+                    let poly = vars.get(challenge_name).unwrap();
+                    poly.clone()
+                }
+            } else {
+                QPoly::new_constant(Rational32::from(f.to_i32().unwrap()))
+            }
         },
         Var(v) => {
             let cell_fmt =
@@ -209,7 +224,7 @@ fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf) 
     }
 }
 
-fn demo_analysis() {
+fn get_circuit_polys() -> Vec<Polynomial<Lex, u8, Ratio<i32>, i16>> {
     let block = gen_empty_block();
     let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
     let k = 9;
@@ -218,9 +233,11 @@ fn demo_analysis() {
 
     let p = BigUint::parse_bytes(b"100000000000000000000000000000000", 16).unwrap()
         - BigUint::from(159u64);
-    let mut analysis = Analysis::new();
+    // let mut analysis = Analysis::new();
     let cell_fmt =
         |f: &mut fmt::Formatter<'_>, c: &Cell| write!(f, "{}", CellDisplay { c, plaf: &plaf });
+
+    let mut polys = vec![];
     for offset in 0..plaf.info.num_rows {
         for poly in &plaf.polys {
             let exp = plaf.resolve(&poly.exp, offset);
@@ -237,11 +254,13 @@ fn demo_analysis() {
             let mut vars = HashMap::new();
             let p = build_poly(exp, &mut vars, &plaf);
             println!("{}", p);
+            polys.push(p);
             println!("======");
 
             // find_bounds_poly(&exp, &p, &mut analysis);
         }
     }
+    /*
     let bound_base = bound_base(&p);
     for (cell, attrs) in &analysis.vars_attrs {
         if attrs.bound == bound_base {
@@ -256,6 +275,9 @@ fn demo_analysis() {
         );
         println!("  {:?}", attrs.bound);
     }
+    */
+
+    polys
 }
 
 #[cfg(test)]
@@ -266,16 +288,22 @@ mod tests {
     #[test]
     fn circuit_test() {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-        demo_analysis();
+        let mut polys = get_circuit_polys();
 
+        /*
         let [x, y, z]: [QPoly; 3] = QPoly::new_variables([2, 1, 0u8]).try_into().unwrap();
         let eqs = [
             x.clone() * x.clone() + y.clone() * y.clone() + z.clone() * z.clone() - r(1),
             x.clone() * x.clone() - y.clone() + z.clone() * z.clone(),
             x.clone() - z.clone(),
         ];
+        */
 
-        let grobner_basis = grobner_basis(&mut eqs.into_iter());
+        polys = polys[0..7].to_vec();
+
+        println!("{}", polys.len());
+
+        let grobner_basis = grobner_basis(&mut polys.into_iter());
         println!("Gröbner Basis:");
         for p in grobner_basis.iter() {
             println!("{}", p);
