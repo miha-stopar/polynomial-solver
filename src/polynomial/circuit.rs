@@ -194,6 +194,9 @@ fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf) 
                 }
             );
 
+            // println!("++++==++++");
+            // println!("{}", f);
+
             if !vars.contains_key(&f) {
                 let l = vars.len();
                 let poly = QPoly::new_var(l.try_into().unwrap());
@@ -225,11 +228,14 @@ fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf) 
 
 fn get_circuit_polys() -> Vec<Polynomial<Lex, u8, BigRational, i16>> {
     let block = gen_empty_block();
-    // let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
-    // let k = 9;
+    let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
+    let k = 9;
 
-    let circuit = StateCircuit::<Fr>::new_from_block(&block);
-    let k = 20;
+    // let circuit = StateCircuit::<Fr>::new_from_block(&block);
+    // let k = 17;
+
+    // let circuit = KeccakCircuit::<Fr>::new_from_block(&block);
+    // let k = 11;
 
     let mut plaf = get_plaf(k, &circuit).unwrap();
     name_challanges(&mut plaf);
@@ -242,11 +248,14 @@ fn get_circuit_polys() -> Vec<Polynomial<Lex, u8, BigRational, i16>> {
         |f: &mut fmt::Formatter<'_>, c: &Cell| write!(f, "{}", CellDisplay { c, plaf: &plaf });
 
     let mut polys = vec![];
+
+    let mut count = 0;
+    let mut vars = HashMap::new();
+
     for offset in 0..plaf.info.num_rows {
         for poly in &plaf.polys {
             let exp = plaf.resolve(&poly.exp, offset);
-            let exp = exp.simplify(&p);
-            /*
+            // let exp = exp.simplify(&p);
             println!(
                 "\"{}\" {}",
                 poly.name,
@@ -255,12 +264,15 @@ fn get_circuit_polys() -> Vec<Polynomial<Lex, u8, BigRational, i16>> {
                     var_fmt: cell_fmt
                 }
             );
-            */
 
-            let mut vars = HashMap::new();
             let p = build_poly(exp, &mut vars, &plaf);
-            // println!("{}", p);
-            // polys.push(p);
+            println!("{}", p);
+            polys.push(p);
+            count += 1;
+
+            if count == 10 {
+                return polys
+            }
             // println!("======");
 
             // find_bounds_poly(&exp, &p, &mut analysis);
