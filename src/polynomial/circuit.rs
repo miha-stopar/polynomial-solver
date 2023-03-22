@@ -147,13 +147,13 @@ fn demo_get_plaf() {
     gen_circuit_plaf::<SuperCircuit<Fr, 1, 64, 0x100>>("super", 19, &block);
 }
 
-fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf, simplification: bool) -> Constraint
+fn build_constraint(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf, poly_info: &mut PolyInfo, simplification: bool) -> Constraint
 {
     use Expr::*;
 
     match expr {
         Pow(e, f) => {
-            let c = build_poly(*e, vars, plaf, simplification);
+            let c = build_constraint(*e, vars, plaf, poly_info, simplification);
             let mut poly = QPoly::one();
             for _ in 0..f {
                 poly = poly * c.poly.clone();
@@ -161,7 +161,7 @@ fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf, 
             Constraint{poly}
         }
         Neg(e) => {
-            let c = build_poly(*e, vars, plaf, simplification);
+            let c = build_constraint(*e, vars, plaf, poly_info, simplification);
             let min = QPoly::new_constant(BigRational::from(BigInt::from(-1)));
             Constraint{poly: min * c.poly}
         }
@@ -202,13 +202,22 @@ fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf, 
             if simplification {
                 let s = f.split("[").collect::<Vec<_>>();
                 var_name = s[0];
-                let row = s[1].split("]").collect::<Vec<_>>()[0];
+                let curr_row = s[1].split("]").collect::<Vec<_>>()[0].parse::<i32>().unwrap();
+                if poly_info.min_row == -1 {
+                    poly_info.min_row = curr_row;
+                } else {
+                    if curr_row < poly_info.min_row {
+                        poly_info.min_row = curr_row;
+                    }
+                }
             } else {
                 var_name = &f;
             }
             
             // println!("{}", var_name);
             // println!("{}", row);
+
+            // TODO: for each rotation a new variable is to be introduced (only for simplification = true)
 
             if !vars.contains_key(var_name) {
                 let l = vars.len();
@@ -222,7 +231,7 @@ fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf, 
         },
         Sum(es) => {
             let mut poly = QPoly::zero();
-            for x in es.into_iter().map(|x| build_poly(x, vars, plaf, simplification)) {
+            for x in es.into_iter().map(|x| build_constraint(x, vars, plaf, poly_info, simplification)) {
                 poly = poly + x.poly;
             }
 
@@ -230,7 +239,7 @@ fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf, 
         }
         Mul(es) => {
             let mut poly = QPoly::one();
-            for x in es.into_iter().map(|x| build_poly(x, vars, plaf, simplification)) {
+            for x in es.into_iter().map(|x| build_constraint(x, vars, plaf, poly_info, simplification)) {
                 poly = poly * x.poly;
             }
 
@@ -246,6 +255,16 @@ struct Constraint {
 impl std::fmt::Display for Constraint {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         write!(fmt, "{}", self.poly)
+    }
+}
+
+struct PolyInfo {
+    min_row: i32
+}
+
+impl std::fmt::Display for PolyInfo {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(fmt, "{}", self.min_row)
     }
 }
 
@@ -274,6 +293,7 @@ fn get_circuit_polys() -> Vec<Constraint> {
 
     let mut count = 0;
     let mut vars = HashMap::new();
+    let mut new_fixed_columns = HashMap::new();
 
     // Either simplification or assignment
     let simplification = true;
@@ -301,12 +321,32 @@ fn get_circuit_polys() -> Vec<Constraint> {
                 }
             );
 
-            let p = build_poly(exp, &mut vars, &plaf, simplification);
+            let mut poly_info = PolyInfo{min_row: -1};
+            
+            let p = build_constraint(exp, &mut vars, &plaf, &mut poly_info, simplification);
+
+            if !new_fixed_columns.contains_key(&poly.name) {
+                let mut l = vec![];
+                l.push(poly_info.min_row);
+                new_fixed_columns.insert(&poly.name, l);
+            } else {
+                let l = new_fixed_columns.get_mut(&poly.name).unwrap();
+                l.push(poly_info.min_row);
+                // new_fixed_columns[&poly.name] = l;
+            }
+
             println!("{}", p);
+            println!("poly_info: {}", poly_info);
+
             polys.push(p);
             count += 1;
 
-            if count == 100 {
+            if count == 20 {
+                println!("=============");
+
+                // new_fixed_columns - in most cases the columns should be able to merge
+                // into one column
+                println!("{:?}", new_fixed_columns);
                 return polys
             }
             // println!("======");
