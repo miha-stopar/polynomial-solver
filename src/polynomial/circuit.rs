@@ -147,23 +147,23 @@ fn demo_get_plaf() {
     gen_circuit_plaf::<SuperCircuit<Fr, 1, 64, 0x100>>("super", 19, &block);
 }
 
-fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf, simplification: bool) -> QPoly
+fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf, simplification: bool) -> Constraint
 {
     use Expr::*;
 
     match expr {
         Pow(e, f) => {
-            let e = build_poly(*e, vars, plaf, simplification);
+            let c = build_poly(*e, vars, plaf, simplification);
             let mut poly = QPoly::one();
             for _ in 0..f {
-                poly = poly * e.clone();
+                poly = poly * c.poly.clone();
             }
-            poly
+            Constraint{poly}
         }
         Neg(e) => {
-            let e = build_poly(*e, vars, plaf, simplification);
+            let c = build_poly(*e, vars, plaf, simplification);
             let min = QPoly::new_constant(BigRational::from(BigInt::from(-1)));
-            min * e
+            Constraint{poly: min * c.poly}
         }
         Const(f) => {
             if f == BigUint::from(1234u64) {
@@ -174,13 +174,14 @@ fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf, 
                     let l = vars.len();
                     let poly = QPoly::new_var(l.try_into().unwrap());
                     vars.insert(challenge_name.to_owned(), poly.clone());
-                    poly
+                    Constraint{poly}
                 } else {
                     let poly = vars.get(challenge_name).unwrap();
-                    poly.clone()
+                    Constraint{poly: poly.clone()}
                 }
             } else {
-                QPoly::new_constant(BigRational::from(BigInt::from(f)))
+                let poly = QPoly::new_constant(BigRational::from(BigInt::from(f)));
+                Constraint{poly}
             }
         },
         Var(v) => {
@@ -206,39 +207,49 @@ fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf, 
                 var_name = &f;
             }
             
-            println!("{}", var_name);
+            // println!("{}", var_name);
             // println!("{}", row);
 
             if !vars.contains_key(var_name) {
                 let l = vars.len();
                 let poly = QPoly::new_var(l.try_into().unwrap());
                 vars.insert(var_name.to_owned(), poly.clone());
-                poly
+                Constraint{poly}
             } else {
                 let poly = vars.get(var_name).unwrap();
-                poly.clone()
+                Constraint{poly: poly.clone()}
             }
         },
         Sum(es) => {
             let mut poly = QPoly::zero();
             for x in es.into_iter().map(|x| build_poly(x, vars, plaf, simplification)) {
-                poly = poly + x;
+                poly = poly + x.poly;
             }
 
-            poly
+            Constraint{poly}
         }
         Mul(es) => {
             let mut poly = QPoly::one();
             for x in es.into_iter().map(|x| build_poly(x, vars, plaf, simplification)) {
-                poly = poly * x;
+                poly = poly * x.poly;
             }
 
-            poly
+            Constraint{poly}
         }
     }
 }
 
-fn get_circuit_polys() -> Vec<Polynomial<Lex, u8, BigRational, i16>> {
+struct Constraint {
+    poly: Polynomial<Lex, u8, BigRational, i16>,
+}
+
+impl std::fmt::Display for Constraint {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(fmt, "{}", self.poly)
+    }
+}
+
+fn get_circuit_polys() -> Vec<Constraint> {
     let block = gen_empty_block();
     let circuit = BytecodeCircuit::<Fr>::new_from_block(&block);
     let k = 9;
@@ -303,22 +314,6 @@ fn get_circuit_polys() -> Vec<Polynomial<Lex, u8, BigRational, i16>> {
             // find_bounds_poly(&exp, &p, &mut analysis);
         }
     }
-    /*
-    let bound_base = bound_base(&p);
-    for (cell, attrs) in &analysis.vars_attrs {
-        if attrs.bound == bound_base {
-            continue;
-        }
-        println!(
-            "{}",
-            CellDisplay {
-                c: cell,
-                plaf: &plaf
-            }
-        );
-        println!("  {:?}", attrs.bound);
-    }
-    */
 
     polys
 }
@@ -326,15 +321,17 @@ fn get_circuit_polys() -> Vec<Polynomial<Lex, u8, BigRational, i16>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::polynomial::{division::tests::*, grobner_basis::grobner_basis};
+    use crate::polynomial::{grobner_basis::grobner_basis};
 
     #[test]
     fn circuit_test() {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-        let mut polys = get_circuit_polys();
-        // polys = polys[0..7].to_vec();
+        let mut constraints = get_circuit_polys();
+        // constraints = constraints[0..7].to_vec();
 
-        println!("{}", polys.len());
+        println!("{}", constraints.len());
+
+        let polys = constraints.into_iter().map(|x| x.poly);
 
         let grobner_basis = grobner_basis(&mut polys.into_iter());
         println!("Gröbner Basis:");
