@@ -147,13 +147,13 @@ fn demo_get_plaf() {
     gen_circuit_plaf::<SuperCircuit<Fr, 1, 64, 0x100>>("super", 19, &block);
 }
 
-fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf) -> QPoly
+fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf, simplification: bool) -> QPoly
 {
     use Expr::*;
 
     match expr {
         Pow(e, f) => {
-            let e = build_poly(*e, vars, plaf);
+            let e = build_poly(*e, vars, plaf, simplification);
             let mut poly = QPoly::one();
             for _ in 0..f {
                 poly = poly * e.clone();
@@ -161,7 +161,7 @@ fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf) 
             poly
         }
         Neg(e) => {
-            let e = build_poly(*e, vars, plaf);
+            let e = build_poly(*e, vars, plaf, simplification);
             let min = QPoly::new_constant(BigRational::from(BigInt::from(-1)));
             min * e
         }
@@ -197,19 +197,31 @@ fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf) 
             // println!("++++==++++");
             // println!("{}", f);
 
-            if !vars.contains_key(&f) {
+            let var_name;
+            if simplification {
+                let s = f.split("[").collect::<Vec<_>>();
+                var_name = s[0];
+                let row = s[1].split("]").collect::<Vec<_>>()[0];
+            } else {
+                var_name = &f;
+            }
+            
+            println!("{}", var_name);
+            // println!("{}", row);
+
+            if !vars.contains_key(var_name) {
                 let l = vars.len();
                 let poly = QPoly::new_var(l.try_into().unwrap());
-                vars.insert(f, poly.clone());
+                vars.insert(var_name.to_owned(), poly.clone());
                 poly
             } else {
-                let poly = vars.get(&f).unwrap();
+                let poly = vars.get(var_name).unwrap();
                 poly.clone()
             }
         },
         Sum(es) => {
             let mut poly = QPoly::zero();
-            for x in es.into_iter().map(|x| build_poly(x, vars, plaf)) {
+            for x in es.into_iter().map(|x| build_poly(x, vars, plaf, simplification)) {
                 poly = poly + x;
             }
 
@@ -217,7 +229,7 @@ fn build_poly(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf) 
         }
         Mul(es) => {
             let mut poly = QPoly::one();
-            for x in es.into_iter().map(|x| build_poly(x, vars, plaf)) {
+            for x in es.into_iter().map(|x| build_poly(x, vars, plaf, simplification)) {
                 poly = poly * x;
             }
 
@@ -252,10 +264,23 @@ fn get_circuit_polys() -> Vec<Polynomial<Lex, u8, BigRational, i16>> {
     let mut count = 0;
     let mut vars = HashMap::new();
 
+    // Either simplification or assignment
+    let simplification = true;
+
     for offset in 0..plaf.info.num_rows {
         for poly in &plaf.polys {
             let exp = plaf.resolve(&poly.exp, offset);
-            // let exp = exp.simplify(&p);
+            let exp = exp.simplify(&p);
+            /*
+            If you want fixed_columns to be included in the polynomials, you need to comment out
+            the following instruction
+                        ColumnKind::Fixed => Const(
+                            self.fixed[column.index][offset]
+                                .clone()
+                                .unwrap_or_else(BigUint::zero),
+                        ),
+            in resolve function in polyexen/src/plaf.rs.
+            */
             println!(
                 "\"{}\" {}",
                 poly.name,
@@ -265,12 +290,12 @@ fn get_circuit_polys() -> Vec<Polynomial<Lex, u8, BigRational, i16>> {
                 }
             );
 
-            let p = build_poly(exp, &mut vars, &plaf);
+            let p = build_poly(exp, &mut vars, &plaf, simplification);
             println!("{}", p);
             polys.push(p);
             count += 1;
 
-            if count == 10 {
+            if count == 100 {
                 return polys
             }
             // println!("======");
@@ -307,16 +332,6 @@ mod tests {
     fn circuit_test() {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
         let mut polys = get_circuit_polys();
-
-        /*
-        let [x, y, z]: [QPoly; 3] = QPoly::new_variables([2, 1, 0u8]).try_into().unwrap();
-        let eqs = [
-            x.clone() * x.clone() + y.clone() * y.clone() + z.clone() * z.clone() - r(1),
-            x.clone() * x.clone() - y.clone() + z.clone() * z.clone(),
-            x.clone() - z.clone(),
-        ];
-        */
-
         // polys = polys[0..7].to_vec();
 
         println!("{}", polys.len());
