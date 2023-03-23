@@ -351,7 +351,7 @@ fn get_circuit_polys() -> Vec<Constraint> {
             constraints.push(c);
             count += 1;
 
-            if count == 24 {
+            if count == 20 {
                 println!("=============");
 
                 // new_fixed_columns - in most cases the columns should be able to merge
@@ -367,19 +367,24 @@ fn get_circuit_polys() -> Vec<Constraint> {
 
                 // Merge the same fixed columns together:
                 for (name, list) in fixed_column_per_constraint.into_iter() {
+                    let mut fixed_column_found = false;
                     for (ind, q_fixed) in q_fixed_columns.iter().enumerate() {
                         if list == *q_fixed {
                             let c = name_to_constraint.get(name).unwrap();
                             constraint_to_fixed_column.insert(c.name.clone(), ind);
-                        } else {
-
+                            fixed_column_found = true;
+                            break;
                         }
+                    }
+                    if !fixed_column_found {
+                        q_fixed_columns.push(list);
+                        constraint_to_fixed_column.insert(name.clone(), q_fixed_columns.len() - 1);
                     }
                 }
 
                 println!("Constraint to fixed column index:");
                 println!("{:?}", constraint_to_fixed_column);
-
+                
                 return constraints
             }
         }
