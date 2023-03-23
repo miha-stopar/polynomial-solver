@@ -1,9 +1,8 @@
 use bus_mapping::{circuit_input_builder::CircuitsParams, mock::BlockData};
 use eth_types::{bytecode, geth_types::GethData, ToWord, Word};
 use halo2_proofs::{dev::MockProver, halo2curves::bn256::Fr, plonk::Circuit};
-use libc::VM_PAGE_QUERY_PAGE_FICTITIOUS;
 use mock::test_ctx::TestContext;
-use num::{Rational32, rational::Ratio, Rational64, BigRational};
+use num::BigRational;
 use num_traits::{One, ToPrimitive, Zero};
 use num_bigint::{BigInt, BigUint, RandBigInt, Sign};
 use polyexen::{
@@ -15,7 +14,7 @@ use polyexen::{
         Cell, CellDisplay, Plaf, PlafDisplayBaseTOML, PlafDisplayFixedCSV, VarDisplay,
     },
 };
-use std::{fmt, collections::{HashMap, HashSet}};
+use std::{fmt, collections::{HashMap}};
 use zkevm_circuits::{
     bytecode_circuit::circuit::BytecodeCircuit,
     copy_circuit::CopyCircuit,
@@ -148,13 +147,13 @@ fn demo_get_plaf() {
     gen_circuit_plaf::<SuperCircuit<Fr, 1, 64, 0x100>>("super", 19, &block);
 }
 
-fn build_constraint(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &Plaf, poly_info: &mut PolyInfo, simplification: bool) -> Constraint
+fn build_constraint(expr: Expr<Cell>, variables: &mut HashMap<String, QPoly>, plaf: &Plaf, poly_info: &mut PolyInfo, simplification: bool) -> Constraint
 {
     use Expr::*;
 
     match expr {
         Pow(e, f) => {
-            let c = build_constraint(*e, vars, plaf, poly_info, simplification);
+            let c = build_constraint(*e, variables, plaf, poly_info, simplification);
             let mut poly = QPoly::one();
             for _ in 0..f {
                 poly = poly * c.poly.clone();
@@ -162,7 +161,7 @@ fn build_constraint(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &
             Constraint::new_from_poly(poly)
         }
         Neg(e) => {
-            let c = build_constraint(*e, vars, plaf, poly_info, simplification);
+            let c = build_constraint(*e, variables, plaf, poly_info, simplification);
             let min = QPoly::new_constant(BigRational::from(BigInt::from(-1)));
             Constraint::new_from_poly(min * c.poly)
         }
@@ -171,13 +170,13 @@ fn build_constraint(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &
                 // TODO(miha): note that in plaf.rs the challenge is for now resolved
                 // to Const(BigUint::from(1234u64))
                 let challenge_name = "challenge";
-                if !vars.contains_key(challenge_name) {
-                    let l = vars.len();
+                if !variables.contains_key(challenge_name) {
+                    let l = variables.len();
                     let poly = QPoly::new_var(l.try_into().unwrap());
-                    vars.insert(challenge_name.to_owned(), poly.clone());
+                    variables.insert(challenge_name.to_owned(), poly.clone());
                     Constraint::new_from_poly(poly)
                 } else {
-                    let poly = vars.get(challenge_name).unwrap();
+                    let poly = variables.get(challenge_name).unwrap();
                     Constraint::new_from_poly(poly.clone())
                 }
             } else {
@@ -199,11 +198,24 @@ fn build_constraint(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &
             // println!("++++==++++");
             // println!("{}", f);
 
-            let var_name;
+            let mut var_name: String = "".to_owned();
             if simplification {
                 let s = f.split("[").collect::<Vec<_>>();
-                var_name = s[0];
                 let curr_row = s[1].split("]").collect::<Vec<_>>()[0].parse::<i32>().unwrap();
+
+                var_name = s[0].to_owned();
+                if poly_info.var_to_rows.contains_key(&var_name) {
+                    let v = poly_info.var_to_rows.get(&var_name).unwrap();
+                    if !v.contains(&curr_row) {
+                        var_name = var_name.to_owned() + &v.len().to_string().to_owned();
+                    }
+
+                } else {
+                    let mut v = vec![];
+                    v.push(curr_row);
+                    poly_info.var_to_rows.insert(var_name.to_owned(), v);
+                }
+
                 if poly_info.min_row == -1 {
                     poly_info.min_row = curr_row;
                 } else {
@@ -212,7 +224,7 @@ fn build_constraint(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &
                     }
                 }
             } else {
-                var_name = &f;
+                var_name = f;
             }
             
             // println!("{}", var_name);
@@ -220,19 +232,19 @@ fn build_constraint(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &
 
             // TODO: for each rotation a new variable is to be introduced (only for simplification = true)
 
-            if !vars.contains_key(var_name) {
-                let l = vars.len();
+            if !variables.contains_key(&var_name) {
+                let l = variables.len();
                 let poly = QPoly::new_var(l.try_into().unwrap());
-                vars.insert(var_name.to_owned(), poly.clone());
+                variables.insert(var_name.to_owned(), poly.clone());
                 Constraint::new_from_poly(poly)
             } else {
-                let poly = vars.get(var_name).unwrap();
+                let poly = variables.get(&var_name).unwrap();
                 Constraint::new_from_poly(poly.clone())
             }
         },
         Sum(es) => {
             let mut poly = QPoly::zero();
-            for x in es.into_iter().map(|x| build_constraint(x, vars, plaf, poly_info, simplification)) {
+            for x in es.into_iter().map(|x| build_constraint(x, variables, plaf, poly_info, simplification)) {
                 poly = poly + x.poly;
             }
 
@@ -240,7 +252,7 @@ fn build_constraint(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &
         }
         Mul(es) => {
             let mut poly = QPoly::one();
-            for x in es.into_iter().map(|x| build_constraint(x, vars, plaf, poly_info, simplification)) {
+            for x in es.into_iter().map(|x| build_constraint(x, variables, plaf, poly_info, simplification)) {
                 poly = poly * x.poly;
             }
 
@@ -268,7 +280,14 @@ impl std::fmt::Display for Constraint {
 }
 
 struct PolyInfo {
-    min_row: i32
+    min_row: i32,
+    var_to_rows: HashMap<String, Vec<i32>>,
+}
+
+impl PolyInfo {
+    fn new() -> Self {
+        PolyInfo{min_row: -1, var_to_rows: HashMap::new()}
+    }
 }
 
 impl std::fmt::Display for PolyInfo {
@@ -300,7 +319,7 @@ fn get_circuit_polys() -> Vec<Constraint> {
     let mut constraints = vec![];
 
     let mut count = 0;
-    let mut vars = HashMap::new();
+    let mut variables:HashMap<String, QPoly> = HashMap::new();
     let mut fixed_column_per_constraint = HashMap::new();
 
     // Either simplification or assignment
@@ -321,6 +340,7 @@ fn get_circuit_polys() -> Vec<Constraint> {
                         ),
             in resolve function in polyexen/src/plaf.rs.
             */
+
             println!(
                 "\"{}\" {}",
                 poly.name,
@@ -330,9 +350,9 @@ fn get_circuit_polys() -> Vec<Constraint> {
                 }
             );
 
-            let mut poly_info = PolyInfo{min_row: -1};
+            let mut poly_info = PolyInfo::new();
             
-            let mut c = build_constraint(exp, &mut vars, &plaf, &mut poly_info, simplification);
+            let mut c = build_constraint(exp, &mut variables, &plaf, &mut poly_info, simplification);
             c.name = poly.name.clone();
             name_to_constraint.insert(poly.name.clone(), c.clone());
 
@@ -345,18 +365,16 @@ fn get_circuit_polys() -> Vec<Constraint> {
                 l.push(poly_info.min_row);
             }
 
-            // println!("{}", c);
+            println!("{}", c.poly);
             // println!("poly_info: {}", poly_info);
 
             constraints.push(c);
             count += 1;
 
-            if count == 20 {
+            if count == 5 {
                 println!("=============");
 
-                // new_fixed_columns - in most cases the columns should be able to merge
-                // into one column
-                println!("{:?}", fixed_column_per_constraint);
+                // println!("{:?}", fixed_column_per_constraint);
 
                 let first_constraint = &constraints[0];
                 let q_fixed = fixed_column_per_constraint[&first_constraint.name].clone();
@@ -382,8 +400,10 @@ fn get_circuit_polys() -> Vec<Constraint> {
                     }
                 }
 
-                println!("Constraint to fixed column index:");
-                println!("{:?}", constraint_to_fixed_column);
+                // println!("Constraint to fixed column index:");
+                // println!("{:?}", constraint_to_fixed_column);
+
+                println!("variables count: {}", variables.len());
                 
                 return constraints
             }
