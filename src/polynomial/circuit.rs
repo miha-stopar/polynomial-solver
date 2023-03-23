@@ -1,6 +1,7 @@
 use bus_mapping::{circuit_input_builder::CircuitsParams, mock::BlockData};
 use eth_types::{bytecode, geth_types::GethData, ToWord, Word};
 use halo2_proofs::{dev::MockProver, halo2curves::bn256::Fr, plonk::Circuit};
+use libc::VM_PAGE_QUERY_PAGE_FICTITIOUS;
 use mock::test_ctx::TestContext;
 use num::{Rational32, rational::Ratio, Rational64, BigRational};
 use num_traits::{One, ToPrimitive, Zero};
@@ -158,12 +159,12 @@ fn build_constraint(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &
             for _ in 0..f {
                 poly = poly * c.poly.clone();
             }
-            Constraint{poly}
+            Constraint::new_from_poly(poly)
         }
         Neg(e) => {
             let c = build_constraint(*e, vars, plaf, poly_info, simplification);
             let min = QPoly::new_constant(BigRational::from(BigInt::from(-1)));
-            Constraint{poly: min * c.poly}
+            Constraint::new_from_poly(min * c.poly)
         }
         Const(f) => {
             if f == BigUint::from(1234u64) {
@@ -174,14 +175,14 @@ fn build_constraint(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &
                     let l = vars.len();
                     let poly = QPoly::new_var(l.try_into().unwrap());
                     vars.insert(challenge_name.to_owned(), poly.clone());
-                    Constraint{poly}
+                    Constraint::new_from_poly(poly)
                 } else {
                     let poly = vars.get(challenge_name).unwrap();
-                    Constraint{poly: poly.clone()}
+                    Constraint::new_from_poly(poly.clone())
                 }
             } else {
                 let poly = QPoly::new_constant(BigRational::from(BigInt::from(f)));
-                Constraint{poly}
+                Constraint::new_from_poly(poly)
             }
         },
         Var(v) => {
@@ -223,10 +224,10 @@ fn build_constraint(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &
                 let l = vars.len();
                 let poly = QPoly::new_var(l.try_into().unwrap());
                 vars.insert(var_name.to_owned(), poly.clone());
-                Constraint{poly}
+                Constraint::new_from_poly(poly)
             } else {
                 let poly = vars.get(var_name).unwrap();
-                Constraint{poly: poly.clone()}
+                Constraint::new_from_poly(poly.clone())
             }
         },
         Sum(es) => {
@@ -235,7 +236,7 @@ fn build_constraint(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &
                 poly = poly + x.poly;
             }
 
-            Constraint{poly}
+            Constraint::new_from_poly(poly)
         }
         Mul(es) => {
             let mut poly = QPoly::one();
@@ -243,18 +244,26 @@ fn build_constraint(expr: Expr<Cell>, vars: &mut HashMap<String, QPoly>, plaf: &
                 poly = poly * x.poly;
             }
 
-            Constraint{poly}
+            Constraint::new_from_poly(poly)
         }
     }
 }
 
+#[derive(Clone)]
 struct Constraint {
+    name: String,
     poly: Polynomial<Lex, u8, BigRational, i16>,
+}
+
+impl Constraint {
+    fn new_from_poly(poly: Polynomial<Lex, u8, BigRational, i16>) -> Self {
+        Constraint{name: "".to_owned(), poly}
+    }
 }
 
 impl std::fmt::Display for Constraint {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(fmt, "{}", self.poly)
+        write!(fmt, "{} {}", self.name, self.poly)
     }
 }
 
@@ -282,21 +291,21 @@ fn get_circuit_polys() -> Vec<Constraint> {
     let mut plaf = get_plaf(k, &circuit).unwrap();
     name_challanges(&mut plaf);
 
-
     let p = BigUint::parse_bytes(b"100000000000000000000000000000000", 16).unwrap()
         - BigUint::from(159u64);
     // let mut analysis = Analysis::new();
     let cell_fmt =
         |f: &mut fmt::Formatter<'_>, c: &Cell| write!(f, "{}", CellDisplay { c, plaf: &plaf });
 
-    let mut polys = vec![];
+    let mut constraints = vec![];
 
     let mut count = 0;
     let mut vars = HashMap::new();
-    let mut new_fixed_columns = HashMap::new();
+    let mut fixed_column_per_constraint = HashMap::new();
 
     // Either simplification or assignment
     let simplification = true;
+    let mut name_to_constraint = HashMap::new();
 
     for offset in 0..plaf.info.num_rows {
         for poly in &plaf.polys {
@@ -323,39 +332,60 @@ fn get_circuit_polys() -> Vec<Constraint> {
 
             let mut poly_info = PolyInfo{min_row: -1};
             
-            let p = build_constraint(exp, &mut vars, &plaf, &mut poly_info, simplification);
+            let mut c = build_constraint(exp, &mut vars, &plaf, &mut poly_info, simplification);
+            c.name = poly.name.clone();
+            name_to_constraint.insert(poly.name.clone(), c.clone());
 
-            if !new_fixed_columns.contains_key(&poly.name) {
+            if !fixed_column_per_constraint.contains_key(&poly.name) {
                 let mut l = vec![];
                 l.push(poly_info.min_row);
-                new_fixed_columns.insert(&poly.name, l);
+                fixed_column_per_constraint.insert(&poly.name, l);
             } else {
-                let l = new_fixed_columns.get_mut(&poly.name).unwrap();
+                let l = fixed_column_per_constraint.get_mut(&poly.name).unwrap();
                 l.push(poly_info.min_row);
-                // new_fixed_columns[&poly.name] = l;
             }
 
-            println!("{}", p);
-            println!("poly_info: {}", poly_info);
+            // println!("{}", c);
+            // println!("poly_info: {}", poly_info);
 
-            polys.push(p);
+            constraints.push(c);
             count += 1;
 
-            if count == 20 {
+            if count == 24 {
                 println!("=============");
 
                 // new_fixed_columns - in most cases the columns should be able to merge
                 // into one column
-                println!("{:?}", new_fixed_columns);
-                return polys
-            }
-            // println!("======");
+                println!("{:?}", fixed_column_per_constraint);
 
-            // find_bounds_poly(&exp, &p, &mut analysis);
+                let first_constraint = &constraints[0];
+                let q_fixed = fixed_column_per_constraint[&first_constraint.name].clone();
+                let mut q_fixed_columns = vec![];
+                q_fixed_columns.push(q_fixed);
+                let mut constraint_to_fixed_column = HashMap::<String, usize>::new();
+                constraint_to_fixed_column.insert(first_constraint.name.clone(), 0);
+
+                // Merge the same fixed columns together:
+                for (name, list) in fixed_column_per_constraint.into_iter() {
+                    for (ind, q_fixed) in q_fixed_columns.iter().enumerate() {
+                        if list == *q_fixed {
+                            let c = name_to_constraint.get(name).unwrap();
+                            constraint_to_fixed_column.insert(c.name.clone(), ind);
+                        } else {
+
+                        }
+                    }
+                }
+
+                println!("Constraint to fixed column index:");
+                println!("{:?}", constraint_to_fixed_column);
+
+                return constraints
+            }
         }
     }
 
-    polys
+    constraints
 }
 
 #[cfg(test)]
